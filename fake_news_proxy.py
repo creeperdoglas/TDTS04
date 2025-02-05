@@ -111,18 +111,19 @@ def handle_client(client_conn, client_addr):
 
     # Build a new request to send to the remote server
     # We’ll go with HTTP/1.0 to keep it simpler, and close the connection.
+    #update, after thinking using 1.1 (same as the browser) will benefit the proxy by allowing keep alive and no longer forcing connection close.
     out_headers = []
-    out_headers.append(f"{method} {path} HTTP/1.0")
+    out_headers.append(f"{method} {path} HTTP/1.1")
     out_headers.append(f"Host: {remote_host}")
-    out_headers.append("Connection: close")
+    #out_headers.append("Connection: close")
 
     # Forward other relevant headers except any Proxy-Connection, etc.
     # We'll keep User-Agent, Accept, etc.
     for line in request_headers[1:]:
         lower = line.lower()
         if lower.startswith("proxy-connection"):
-            continue
-        if lower.startswith("connection"):
+            #continue
+        #if lower.startswith("connection"):
             continue
         out_headers.append(line)
 
