@@ -280,6 +280,8 @@ def extract_host_port_path(url_or_path, header_dict):
         tmp = url_or_path[7:]
         # find first slash
         slash_pos = tmp.find('/')
+        print(f"[DEBUG] remote_host={remote_host}, remote_port={remote_port}, path={path}")
+
         if slash_pos == -1:
             # no slash => no path
             host_part = tmp
