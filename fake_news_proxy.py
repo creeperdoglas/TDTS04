@@ -7,7 +7,7 @@ import sys
 TROLL_IMAGE_PATH = "troll.jpg"
 
 # The port on which our proxy will listen
-PROXY_PORT = 8888
+PROXY_PORT = 8001
 
 # A simple function to read HTTP headers from a socket.
 # Returns a list of decoded lines (not including the final blank line).
