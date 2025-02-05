@@ -3,21 +3,23 @@ import socket
 import threading
 import sys
 
-# This is the local file we serve when someone requests "Smiley.jpg"
+# TROLL_IMAGE_PATH: local file we serve when "Smiley.jpg" is requested
 TROLL_IMAGE_PATH = "troll.jpg"
 
 # The port on which our proxy will listen
 PROXY_PORT = 8001
 
-# A simple function to read HTTP headers from a socket.
-# Returns a list of decoded lines (not including the final blank line).
 def read_http_headers(sock):
+    """
+    Reads HTTP headers from 'sock', stopping at the first blank line.
+    Returns a list of decoded lines (header lines).
+    Returns an empty list if socket closes before any headers are read.
+    """
     headers = []
-    # We read line by line until we hit a blank line.
     while True:
         line = read_line(sock)
         if not line:
-            # Either connection closed or we got an empty line
+            # Either connection closed or got empty line
             break
         stripped = line.strip('\r\n')
         if stripped == "":
@@ -27,11 +29,13 @@ def read_http_headers(sock):
     return headers
 
 def read_line(sock):
+    """
+    Read one line (until '\n') from the socket or return None if EOF.
+    """
     data = bytearray()
     while True:
         chunk = sock.recv(1)
         if not chunk:
-            # EOF
             if len(data) == 0:
                 return None
             break
@@ -41,9 +45,13 @@ def read_line(sock):
     return data.decode('utf-8', errors='replace')
 
 def forward_raw(sock_in, sock_out, length=None):
+    """
+    Forward raw bytes from sock_in to sock_out.
+    If length is specified, read exactly that many bytes.
+    Otherwise, read until EOF from sock_in.
+    """
     BUFSIZE = 4096
     if length is not None:
-        # Read exactly length bytes
         remaining = length
         while remaining > 0:
             chunk = sock_in.recv(min(BUFSIZE, remaining))
@@ -52,7 +60,7 @@ def forward_raw(sock_in, sock_out, length=None):
             sock_out.sendall(chunk)
             remaining -= len(chunk)
     else:
-        # Read until EOF
+        # read until EOF
         while True:
             chunk = sock_in.recv(BUFSIZE)
             if not chunk:
@@ -62,24 +70,24 @@ def forward_raw(sock_in, sock_out, length=None):
 def handle_client(client_conn, client_addr):
     print(f"[{client_addr}] Handling new connection.")
 
+    # 1) Read request headers from the client
     request_headers = read_http_headers(client_conn)
     if not request_headers:
-        # No headers means the client likely disconnected immediately
+        # No headers means client likely disconnected immediately
         client_conn.close()
         print(f"[{client_addr}] No request received. Connection closed.")
         return
 
-    # Parse the first request line, e.g. "GET http://example.com/ HTTP/1.1"
+    # 2) Parse the first request line, e.g. "GET http://example.com/ HTTP/1.1"
     request_line = request_headers[0]
     method, url_or_path, http_version = parse_request_line(request_line)
     if method is None:
-        # Malformed
         send_http_error(client_conn, 400, "Bad Request")
         client_conn.close()
         print(f"[{client_addr}] Malformed request line. Connection closed.")
         return
 
-    # Convert headers list to dict (lowercase keys for ease)
+    # 3) Convert remaining headers into a dict (lowercase keys)
     header_dict = {}
     for h in request_headers[1:]:
         parts = h.split(":", 1)
@@ -87,53 +95,51 @@ def handle_client(client_conn, client_addr):
             k, v = parts[0].strip(), parts[1].strip()
             header_dict[k.lower()] = v
 
-    # If no Host header is found, we might parse from the URL directly
+    # 4) Extract the host, port, and the actual path (stripping "http://...")
     remote_host, remote_port, path = extract_host_port_path(url_or_path, header_dict)
+    print(f"[DEBUG] remote_host={remote_host}, remote_port={remote_port}, path={path}")
 
-    # If method != GET, we can either handle or just send an error
-    # For this assignment, let's only handle GET
+    # 5) Only handle GET
     if method.upper() != "GET":
         send_http_error(client_conn, 501, "Not Implemented")
         client_conn.close()
         print(f"[{client_addr}] Method {method} not supported.")
         return
 
-    # ----------------------------------------------------------
-    # Special case: If path ends with "Smiley.jpg", serve local troll image.
-    # This is the simplest approach: we do not even contact the remote server.
-    # ----------------------------------------------------------
+    # 6) Special case: If path ends with "Smiley.jpg", serve local troll image
     if path.lower().endswith("smiley.jpg"):
-        # Serve local troll image
         serve_local_image(client_conn, http_version, TROLL_IMAGE_PATH)
         client_conn.close()
         print(f"[{client_addr}] Served troll image for Smiley.jpg request.")
         return
 
-    # Build a new request to send to the remote server
-    # We’ll go with HTTP/1.0 to keep it simpler, and close the connection.
-    #update, after thinking using 1.1 (same as the browser) will benefit the proxy by allowing keep alive and no longer forcing connection close.
+    # 7) Build a new request to send to the remote server
+    #    We'll use HTTP/1.1 so we don't forcibly downgrade. 
     out_headers = []
     out_headers.append(f"{method} {path} HTTP/1.1")
     out_headers.append(f"Host: {remote_host}")
-    #out_headers.append("Connection: close")
+    # If you want to force close:
+    # out_headers.append("Connection: close")
 
-    # Forward other relevant headers except any Proxy-Connection, etc.
-    # We'll keep User-Agent, Accept, etc.
+    # 8) Forward other relevant headers, except Proxy-Connection. 
+    #    If you want to skip "Connection:" entirely, you can do so; 
+    #    here we keep it for potential keep-alive benefits.
     for line in request_headers[1:]:
         lower = line.lower()
-        # Skip Proxy-Connection
         if lower.startswith("proxy-connection"):
-         continue
-        # Skip Connection if you want to manage it yourself
-        elif lower.startswith("connection"):
             continue
+        # if you wanted to skip any "Connection:" from the client, uncomment:
+        # elif lower.startswith("connection"):
+        #     continue
         else:
             out_headers.append(line)
 
-
+    # 9) Final request string to server
     out_req = "\r\n".join(out_headers) + "\r\n\r\n"
+    # Debug print if needed:
+    # print("[DEBUG] Outgoing request:\n" + out_req)
 
-    # Connect to remote server
+    # 10) Connect to remote server
     try:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.connect((remote_host, remote_port))
@@ -143,22 +149,20 @@ def handle_client(client_conn, client_addr):
         client_conn.close()
         return
 
-    # Send the request
+    # 11) Send the request to the server
     server_socket.sendall(out_req.encode('utf-8'))
 
-    # Now read the response headers
+    # 12) Read the response headers from the server
     response_headers = read_http_headers(server_socket)
     if not response_headers:
-        # The server closed or sent no headers
-        # We'll just close
+        # The server closed or sent nothing
         server_socket.close()
         client_conn.close()
         print(f"[{client_addr}] Server closed without sending headers.")
         return
 
-    # The first line is status, e.g. "HTTP/1.1 200 OK"
+    # 13) Parse the first response line (status) and build a dict of headers
     resp_status_line = response_headers[0]
-    # Convert next lines to dict
     resp_header_dict = {}
     for h in response_headers[1:]:
         parts = h.split(":", 1)
@@ -167,7 +171,7 @@ def handle_client(client_conn, client_addr):
             v = parts[1].strip()
             resp_header_dict[k] = v
 
-    # Check content-length or chunked
+    # 14) Check for content-length, chunked, etc.
     content_length = None
     is_chunked = False
     content_encoding = resp_header_dict.get("content-encoding", "").lower()
@@ -182,108 +186,96 @@ def handle_client(client_conn, client_addr):
     if "transfer-encoding" in resp_header_dict and "chunked" in resp_header_dict["transfer-encoding"].lower():
         is_chunked = True
 
-    # We'll reconstruct the response to send to the client
-    # but might modify the body if it's text and not compressed/chunked
+    # 15) Reconstruct response headers
     out_resp_headers = []
     out_resp_headers.append(resp_status_line)
 
-    # We might alter or remove certain headers (e.g. remove chunked if we re-generate content-length).
-    # But let's keep it simple: if it's chunked or compressed, we won't attempt to do replacements,
-    # we'll just forward raw.
-    # So we basically forward all headers as-is, but if we do replacements, we'll recalc content-length.
-    skip_headers = set(["transfer-encoding"])  # we'll handle chunked logic ourselves
+    skip_headers = set(["transfer-encoding"])  # We'll handle chunked logic ourselves
     for k, v in resp_header_dict.items():
         if k in skip_headers:
             continue
-        # We'll preserve this header for now
-        # We'll re-add content-length later if we replace the body
         if k == "content-length":
+            # We'll add it later if we do modifications
             continue
-        # Re-emit the header
-        header_line = f"{k}: {v}"
-        out_resp_headers.append(header_line)
+        # Otherwise, forward the header as-is
+        out_resp_headers.append(f"{k}: {v}")
 
-    # We'll read the body now
-    #  - If chunked or compressed, forward it as is (no replacements).
-    #  - Else, read entire body, do text replacements, fix content-length.
+    # 16) Decide whether to do text replacements or forward raw
     body_data = b""
 
     if (not is_chunked) and (content_encoding == "") and ("text" in content_type):
-        # => we attempt to read the entire body, do replacements
+        # => Attempt to read entire body and do replacements
         if content_length is not None:
-            # read exactly content_length bytes
             body_data = read_exact(server_socket, content_length)
         else:
-            # read until EOF
             body_data = read_until_eof(server_socket)
 
-        # do the replacements (Smiley->Trolly, Stockholm->Linköping)
+        # Simple replacements
         try:
             text_str = body_data.decode('utf-8', errors='replace')
             text_str = text_str.replace("Smiley", "Trolly")
             text_str = text_str.replace("Stockholm", "Linköping")
             body_data = text_str.encode('utf-8')
-        except Exception as e:
-            # fallback: just keep original body if any decode error
+        except Exception:
+            # if decode fails, keep the original body_data
             pass
 
-        # Now recalc content-length
+        # Add a new Content-Length
         new_len = len(body_data)
         out_resp_headers.append(f"Content-Length: {new_len}")
 
     else:
-        # We do NOT do replacements. We just forward raw.
-        # So let's keep or forward the original content-length or chunked
-        # If chunked, let's forward the "Transfer-Encoding: chunked"
+        # Forward raw, no replacements
         if is_chunked:
             out_resp_headers.append("Transfer-Encoding: chunked")
         elif content_length is not None:
             out_resp_headers.append(f"Content-Length: {content_length}")
-        # read the body and forward raw
-        forward_raw_data = b""
 
-    # Add a blank line to end headers
+    # 17) End headers with a blank line
     out_resp_headers.append("")
     out_resp_headers_raw = "\r\n".join(out_resp_headers).encode('utf-8')
 
-    # Send headers to client
+    # 18) Send headers to the client
     client_conn.sendall(out_resp_headers_raw)
 
+    # 19) Forward the body
     if (not is_chunked) and (content_encoding == "") and ("text" in content_type):
-        # We have the modified body in memory (body_data). Send it.
+        # We have the modified body in memory
         client_conn.sendall(body_data)
     else:
         # Just forward raw from server to client
         if content_length is not None:
-            # forward exactly content_length
             forward_raw(server_socket, client_conn, content_length)
         else:
-            # chunked or no length -> forward until EOF
             forward_raw(server_socket, client_conn, None)
 
-    # Close sockets
+    # 20) Close both sockets
     server_socket.close()
     client_conn.close()
     print(f"[{client_addr}] Done. Connection closed.")
 
 def parse_request_line(line):
+    """
+    Parse the first request line, e.g. 'GET http://example.com/ HTTP/1.1'.
+    Returns (method, url_or_path, http_version) or (None, None, None) if malformed.
+    """
     parts = line.split()
     if len(parts) != 3:
         return None, None, None
     return parts[0], parts[1], parts[2]
 
 def extract_host_port_path(url_or_path, header_dict):
+    """
+    If url_or_path is full, like 'http://host:port/path', strip off 'http://host:port'.
+    Return (host, port, path) with default port 80 if none found.
+    If it's just a path, we read the host from the 'Host:' header.
+    """
     default_port = 80
-    # If the request line is a full URL: e.g. "http://hostname:port/path"
     if url_or_path.lower().startswith("http://"):
         # strip off 'http://'
         tmp = url_or_path[7:]
-        # find first slash
         slash_pos = tmp.find('/')
-        #print(f"[DEBUG] remote_host={remote_host}, remote_port={remote_port}, path={path}")
-
         if slash_pos == -1:
-            # no slash => no path
             host_part = tmp
             path_part = "/"
         else:
@@ -319,15 +311,23 @@ def extract_host_port_path(url_or_path, header_dict):
         return host, port, path_part
 
 def send_http_error(sock, code, message):
+    """
+    Send a minimal HTTP error response, then flush/close.
+    """
     body = f"<html><body><h2>{code} {message}</h2></body></html>"
-    resp = (f"HTTP/1.1 {code} {message}\r\n"
-            f"Content-Type: text/html\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            f"Connection: close\r\n\r\n"
-            f"{body}")
+    resp = (
+        f"HTTP/1.1 {code} {message}\r\n"
+        "Content-Type: text/html\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Connection: close\r\n\r\n"
+        f"{body}"
+    )
     sock.sendall(resp.encode('utf-8'))
 
 def read_exact(sock, length):
+    """
+    Read exactly 'length' bytes from sock.
+    """
     data = b""
     remaining = length
     while remaining > 0:
@@ -339,6 +339,9 @@ def read_exact(sock, length):
     return data
 
 def read_until_eof(sock):
+    """
+    Read until the socket is closed (EOF).
+    """
     data = b""
     while True:
         chunk = sock.recv(4096)
@@ -348,10 +351,13 @@ def read_until_eof(sock):
     return data
 
 def serve_local_image(client_sock, http_version, filepath):
+    """
+    Serve a local file (image) if we intercept a request for "Smiley.jpg".
+    """
     try:
         with open(filepath, "rb") as f:
             img_data = f.read()
-        # Send a 200 response
+        # Send a 200 OK response
         resp_headers = (
             f"{http_version} 200 OK\r\n"
             "Content-Type: image/jpeg\r\n"
@@ -362,13 +368,15 @@ def serve_local_image(client_sock, http_version, filepath):
         client_sock.sendall(resp_headers.encode('utf-8'))
         client_sock.sendall(img_data)
     except FileNotFoundError:
-        # Send 404
+        # Send 404 if troll.jpg not found
         body = "<html><body><h2>404 Not Found</h2></body></html>"
-        resp = (f"{http_version} 404 Not Found\r\n"
-                "Content-Type: text/html\r\n"
-                f"Content-Length: {len(body)}\r\n"
-                "Connection: close\r\n\r\n"
-                f"{body}")
+        resp = (
+            f"{http_version} 404 Not Found\r\n"
+            "Content-Type: text/html\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "Connection: close\r\n\r\n"
+            f"{body}"
+        )
         client_sock.sendall(resp.encode('utf-8'))
 
 def main():
@@ -387,9 +395,8 @@ def main():
 
     while True:
         client_conn, client_addr = proxy_socket.accept()
-        # Spawn a thread to handle each client
         t = threading.Thread(target=handle_client, args=(client_conn, client_addr))
-        t.daemon = True  # so it won't block exit if main thread ends
+        t.daemon = True
         t.start()
 
 if __name__ == "__main__":
