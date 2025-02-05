@@ -121,11 +121,15 @@ def handle_client(client_conn, client_addr):
     # We'll keep User-Agent, Accept, etc.
     for line in request_headers[1:]:
         lower = line.lower()
+        # Skip Proxy-Connection
         if lower.startswith("proxy-connection"):
-            #continue
-        #if lower.startswith("connection"):
+         continue
+        # Skip Connection if you want to manage it yourself
+        elif lower.startswith("connection"):
             continue
-        out_headers.append(line)
+        else:
+            out_headers.append(line)
+
 
     out_req = "\r\n".join(out_headers) + "\r\n\r\n"
 
@@ -314,7 +318,7 @@ def extract_host_port_path(url_or_path, header_dict):
 
 def send_http_error(sock, code, message):
     body = f"<html><body><h2>{code} {message}</h2></body></html>"
-    resp = (f"HTTP/1.0 {code} {message}\r\n"
+    resp = (f"HTTP/1.1 {code} {message}\r\n"
             f"Content-Type: text/html\r\n"
             f"Content-Length: {len(body)}\r\n"
             f"Connection: close\r\n\r\n"
