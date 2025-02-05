@@ -2,7 +2,7 @@
 import socket
 import threading
 import sys
-#note, some comments have been added by ai, code however is fully manually written.
+
 # This is the local file we serve when someone requests "Smiley.jpg"
 TROLL_IMAGE_PATH = "troll.jpg"
 
@@ -12,11 +12,6 @@ PROXY_PORT = 8888
 # A simple function to read HTTP headers from a socket.
 # Returns a list of decoded lines (not including the final blank line).
 def read_http_headers(sock):
-    """
-    Reads HTTP headers from `sock`, stopping at the first blank line.
-    Returns a list of strings (header lines).
-    Returns an empty list if socket closes before any headers are read.
-    """
     headers = []
     # We read line by line until we hit a blank line.
     while True:
@@ -32,10 +27,6 @@ def read_http_headers(sock):
     return headers
 
 def read_line(sock):
-    """
-    Read until we get a '\n' from the socket or no data at all.
-    Return the line (including \r\n), or None if EOF.
-    """
     data = bytearray()
     while True:
         chunk = sock.recv(1)
@@ -50,10 +41,6 @@ def read_line(sock):
     return data.decode('utf-8', errors='replace')
 
 def forward_raw(sock_in, sock_out, length=None):
-    """
-    Forward raw bytes from sock_in to sock_out.
-    If length is None, read until EOF. Otherwise, read exactly `length` bytes.
-    """
     BUFSIZE = 4096
     if length is not None:
         # Read exactly length bytes
@@ -73,14 +60,6 @@ def forward_raw(sock_in, sock_out, length=None):
             sock_out.sendall(chunk)
 
 def handle_client(client_conn, client_addr):
-    """
-    Handle a single client connection:
-      1) Parse request
-      2) Connect to remote server if needed
-      3) Forward request, read response
-      4) Possibly modify response
-      5) Send response back to client
-    """
     print(f"[{client_addr}] Handling new connection.")
 
     request_headers = read_http_headers(client_conn)
@@ -122,7 +101,6 @@ def handle_client(client_conn, client_addr):
     # ----------------------------------------------------------
     # Special case: If path ends with "Smiley.jpg", serve local troll image.
     # This is the simplest approach: we do not even contact the remote server.
-    # (Alternatively, you could do something more advanced.)
     # ----------------------------------------------------------
     if path.lower().endswith("smiley.jpg"):
         # Serve local troll image
@@ -284,21 +262,12 @@ def handle_client(client_conn, client_addr):
     print(f"[{client_addr}] Done. Connection closed.")
 
 def parse_request_line(line):
-    """
-    Parse the first line of an HTTP request, e.g. "GET http://example.com/ HTTP/1.1"
-    Returns (method, url_or_path, http_version) or (None, None, None) if malformed.
-    """
     parts = line.split()
     if len(parts) != 3:
         return None, None, None
     return parts[0], parts[1], parts[2]
 
 def extract_host_port_path(url_or_path, header_dict):
-    """
-    Given something like 'http://www.example.com:8080/test/page.html'
-    or '/test/page.html' plus a 'Host' header, return (host, port, path).
-    Defaults port to 80 if none given.
-    """
     default_port = 80
     # If the request line is a full URL: e.g. "http://hostname:port/path"
     if url_or_path.lower().startswith("http://"):
@@ -343,9 +312,6 @@ def extract_host_port_path(url_or_path, header_dict):
         return host, port, path_part
 
 def send_http_error(sock, code, message):
-    """
-    Send a minimal HTTP error response, then flush/close.
-    """
     body = f"<html><body><h2>{code} {message}</h2></body></html>"
     resp = (f"HTTP/1.0 {code} {message}\r\n"
             f"Content-Type: text/html\r\n"
@@ -355,9 +321,6 @@ def send_http_error(sock, code, message):
     sock.sendall(resp.encode('utf-8'))
 
 def read_exact(sock, length):
-    """
-    Read exactly `length` bytes from sock, or fewer if EOF.
-    """
     data = b""
     remaining = length
     while remaining > 0:
@@ -369,9 +332,6 @@ def read_exact(sock, length):
     return data
 
 def read_until_eof(sock):
-    """
-    Read until the socket is closed (EOF).
-    """
     data = b""
     while True:
         chunk = sock.recv(4096)
@@ -381,10 +341,6 @@ def read_until_eof(sock):
     return data
 
 def serve_local_image(client_sock, http_version, filepath):
-    """
-    Sends a local file (image) as an HTTP response.
-    If the file is not found, sends a 404.
-    """
     try:
         with open(filepath, "rb") as f:
             img_data = f.read()
