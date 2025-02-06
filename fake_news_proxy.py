@@ -113,31 +113,45 @@ def handle_client(client_conn, client_addr):
         print(f"[{client_addr}] Served troll image for Smiley.jpg request.")
         return
 
-    # 7) Build a new request to send to the remote server
-    #    We'll use HTTP/1.1 so we don't forcibly downgrade. 
+    # # 7) Build a new request to send to the remote server (FORCE CONNECTION: CLOSE)
+    # out_headers = []
+    # out_headers.append(f"{method} {path} HTTP/1.1")
+    # out_headers.append(f"Host: {remote_host}")
+    # out_headers.append("Connection: close")  # <--- Force the remote server to close
+
+    # # 8) Forward other relevant headers, except Proxy-Connection (and skip any Connection from client)
+    # for line in request_headers[1:]:
+    #     lower = line.lower()
+    #     # Skip Proxy-Connection or Connection from client
+    #     if lower.startswith("proxy-connection") or lower.startswith("connection"):
+    #         continue
+    #     else:
+    #         out_headers.append(line)
     out_headers = []
     out_headers.append(f"{method} {path} HTTP/1.1")
-    out_headers.append(f"Host: {remote_host}")
-    # If you want to force close:
-    # out_headers.append("Connection: close")
 
-    # 8) Forward other relevant headers, except Proxy-Connection. 
-    #    If you want to skip "Connection:" entirely, you can do so; 
-    #    here we keep it for potential keep-alive benefits.
+    # Add your own Host line
+    out_headers.append(f"Host: {remote_host}")
+
+    # Force close
+    out_headers.append("Connection: close")
+
+    # Forward other relevant headers
     for line in request_headers[1:]:
         lower = line.lower()
-        if lower.startswith("proxy-connection"):
+        if lower.startswith("host:"):
+            # Skip it, because we've already added "Host: remote_host"
             continue
-        # if you wanted to skip any "Connection:" from the client, uncomment:
-        # elif lower.startswith("connection"):
-        #     continue
+        elif lower.startswith("proxy-connection"):
+            continue
+        elif lower.startswith("connection"):
+            continue
         else:
             out_headers.append(line)
 
+
     # 9) Final request string to server
     out_req = "\r\n".join(out_headers) + "\r\n\r\n"
-    # Debug print if needed:
-    # print("[DEBUG] Outgoing request:\n" + out_req)
 
     # 10) Connect to remote server
     try:
@@ -150,6 +164,8 @@ def handle_client(client_conn, client_addr):
         return
 
     # 11) Send the request to the server
+    #+ line for debug due to program not working correctly.
+    print("[DEBUG] Outgoing request to server:\n" + out_req)
     server_socket.sendall(out_req.encode('utf-8'))
 
     # 12) Read the response headers from the server
@@ -183,34 +199,41 @@ def handle_client(client_conn, client_addr):
         except:
             content_length = None
 
-    if "transfer-encoding" in resp_header_dict and "chunked" in resp_header_dict["transfer-encoding"].lower():
+    if ("transfer-encoding" in resp_header_dict and
+        "chunked" in resp_header_dict["transfer-encoding"].lower()):
         is_chunked = True
 
-    # 15) Reconstruct response headers
+    # 15) Reconstruct response headers (FORCE CONNECTION: CLOSE in response)
     out_resp_headers = []
     out_resp_headers.append(resp_status_line)
 
-    skip_headers = set(["transfer-encoding"])  # We'll handle chunked logic ourselves
+    # We skip transfer-encoding and connection from original response 
+    # because we are forcing close. 
+    skip_headers = {"transfer-encoding", "connection"}
+
     for k, v in resp_header_dict.items():
         if k in skip_headers:
             continue
         if k == "content-length":
-            # We'll add it later if we do modifications
+            # We'll add it later if we do replacements
             continue
-        # Otherwise, forward the header as-is
         out_resp_headers.append(f"{k}: {v}")
+
+    # Force "Connection: close" to the client
+    out_resp_headers.append("Connection: close")
 
     # 16) Decide whether to do text replacements or forward raw
     body_data = b""
 
+    # If not chunked, no content-encoding, and the content is text, do the Trolly/Linköping replacements
     if (not is_chunked) and (content_encoding == "") and ("text" in content_type):
-        # => Attempt to read entire body and do replacements
+        # => Attempt to read entire body
         if content_length is not None:
             body_data = read_exact(server_socket, content_length)
         else:
             body_data = read_until_eof(server_socket)
 
-        # Simple replacements
+        # Do replacements
         try:
             text_str = body_data.decode('utf-8', errors='replace')
             text_str = text_str.replace("Smiley", "Trolly")
@@ -227,6 +250,9 @@ def handle_client(client_conn, client_addr):
     else:
         # Forward raw, no replacements
         if is_chunked:
+            # We'll still tell the client chunked; but in practice, forcing close usually
+            # means we read until the server closes. If the server doesn't close, 
+            # you would ideally parse the chunks. But let's just pass the info along:
             out_resp_headers.append("Transfer-Encoding: chunked")
         elif content_length is not None:
             out_resp_headers.append(f"Content-Length: {content_length}")
