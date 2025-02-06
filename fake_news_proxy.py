@@ -4,7 +4,7 @@ import threading
 import sys
 
 # TROLL_IMAGE_PATH: local file we serve when "Smiley.jpg" is requested
-TROLL_IMAGE_PATH = "troll.jpg"
+TROLL_IMAGE_PATH = "trolly.jpg"
 
 # The port on which our proxy will listen
 PROXY_PORT = 8001
