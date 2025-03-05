@@ -205,7 +205,7 @@ def handle_client(client_conn, client_addr):
             #special case, so that the spring picture in test 5 works, update: it does not still :(
             special_img = '<img src="./Stockholm-spring.jpg" alt="Stockholm?" width="400" height="300">'
             placeholder = "___MY_SPECIAL_IMG___"
-
+            #maybe do something  path.lower().endswith(".png") or path.lower().endswith(".jpg"): like this instead in the chunked part and foward raw if if it matches?
             
             text_str = text_str.replace(special_img, placeholder)
 
