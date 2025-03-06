@@ -2,7 +2,7 @@
 import socket
 import threading
 import sys
-
+#code made by melgu374 and antfo614
 # TROLL_IMAGE_PATH: local file we serve when "Smiley.jpg" is requested
 TROLL_IMAGE_PATH = "trolly.jpg"
 
