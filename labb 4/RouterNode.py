@@ -11,13 +11,19 @@ class RouterNode():
         self.myGUI = GuiTextArea.GuiTextArea(f"Output window for Router #{ID}")
 
         self.costs = deepcopy(costs)
-        self.neighbors = [i for i in range(len(costs)) if costs[i] != sim.INFINITY and costs[i] != 0]
+       # Tidigare: self.neighbors = [i for i in range(len(costs)) if costs[i] != sim.INFINITY and costs[i] != 0]
+        self.neighbors = [i for i in range(len(costs)) if i != self.myID and costs[i] != sim.INFINITY]
+
+        self.linkcosts = {n: costs[n] for n in self.neighbors}
+        self.ncosts = {n: [sim.INFINITY]*sim.NUM_NODES for n in self.neighbors}
+
         self.distanceTable = [[sim.INFINITY]*sim.NUM_NODES for _ in range(sim.NUM_NODES)]
         self.distanceVector = deepcopy(costs)
         self.nextHops = [None if costs[i] == sim.INFINITY else i for i in range(sim.NUM_NODES)]
 
         self.initRouteTable()
         self.propagate()
+
 
     def initRouteTable(self):
         for i in range(self.sim.NUM_NODES):
@@ -29,13 +35,16 @@ class RouterNode():
 
         self.distanceTable[self.myID][self.myID] = 0
 
-        # NY KOD: Initialisera grannars rader med deras direkta länkkostnader
-        # for neighbor in self.neighbors:
-        #     for dst in range(self.sim.NUM_NODES):
-        #         if neighbor == dst:
-        #             self.distanceTable[neighbor][dst] = 0
-        #         else:
-        #             self.distanceTable[neighbor][dst] = self.sim.INFINITY
+        # NY KOD: Säkerställ att varje grannes kostnad till sig själv är 0
+        for neighbor in self.neighbors:
+            self.ncosts[neighbor][neighbor] = 0
+            self.distanceTable[neighbor][neighbor] = 0
+
+        for neighbor in self.neighbors:
+            # Sätt i båda riktningarna så distansmatrisen är konsekvent.
+            self.distanceTable[neighbor][self.myID] = self.linkcosts[neighbor]
+            self.distanceTable[self.myID][neighbor] = self.linkcosts[neighbor]
+
 
 
     def recvUpdate(self, pkt):
@@ -43,16 +52,19 @@ class RouterNode():
         updated = False
 
         # Uppdatera mottagen distansvektor från grannen
+        self.ncosts[source] = deepcopy(pkt.mincost)
+
+        # Uppdatera även distanceTable med mottagen information
         for dest in range(self.sim.NUM_NODES):
             self.distanceTable[source][dest] = pkt.mincost[dest]
 
-        # Säkerställ att grannens kostnad till sig själv alltid är 0
-        self.distanceTable[source][source] = 0
-
+        # Beräkna om vår egen distansvektor behöver uppdateras
         updated = self.calcMincost()
 
         if updated:
             self.propagate()
+
+
 
 
     def calcMincost(self):
@@ -60,26 +72,28 @@ class RouterNode():
 
         for dst in range(self.sim.NUM_NODES):
             if dst == self.myID:
-                continue
+                new_cost = 0
+                next_hop = None
+            else:
+                new_cost = self.costs[dst]
+                next_hop = None if new_cost == self.sim.INFINITY else dst
 
-            min_cost = self.costs[dst]
-            next_hop = None if min_cost == self.sim.INFINITY else dst
+                for neighbor in self.neighbors:
+                    potential_cost = self.linkcosts[neighbor] + self.ncosts[neighbor][dst]
+                    if potential_cost < new_cost:
+                        new_cost = potential_cost
+                        next_hop = neighbor
 
-            for neighbor in self.neighbors:
-                potential_cost = self.costs[neighbor] + self.distanceTable[neighbor][dst]
-                if potential_cost < min_cost:
-                    min_cost = potential_cost
-                    next_hop = neighbor
-
-            if min_cost != self.distanceVector[dst] or next_hop != self.nextHops[dst]:
+            if new_cost != self.distanceVector[dst] or next_hop != self.nextHops[dst]:
                 updated = True
-                self.distanceVector[dst] = min_cost
+                self.distanceVector[dst] = new_cost
                 self.nextHops[dst] = next_hop
-                
+
             # Uppdatera alltid vår egen rad i distanceTable med aktuell bästa kostnad
-            self.distanceTable[self.myID][dst] = self.distanceVector[dst]
+            self.distanceTable[self.myID][dst] = new_cost
 
         return updated
+
 
 
 
@@ -101,10 +115,11 @@ class RouterNode():
         self.sim.toLayer2(pkt)
 
     def updateLinkCost(self, dest, newcost):
-        # Uppdatera länkkostnaden som i fungerande versionen (andra)
+        # Uppdatera länkkostnaden korrekt enligt fungerande versionen
         oldcost = self.costs[dest]
         self.costs[dest] = newcost
-        self.distanceTable[self.myID][dest] = newcost
+        if dest in self.linkcosts:
+            self.linkcosts[dest] = newcost
 
         updated = False
         updated = self.calcMincost()
@@ -112,15 +127,14 @@ class RouterNode():
         if updated:
             self.propagate()
 
+
     def printDistanceTable(self):
-        # Samma struktur som originalet men med fungerande data från andra versionen
         time_now = str(self.sim.getClocktime())
         
         header = f"    dst |" + "  ".join(f"{i}" for i in range(self.sim.NUM_NODES))
-        
         separator_line = "-" * len(header)
         
-        # Utskrift av distanstabellen (som originalet)
+        # Utskrift av distanstabellen
         self.myGUI.println(f"Current state for router {self.myID} at time {time_now}")
         
         self.myGUI.println("\nDistancetable:")
@@ -133,19 +147,18 @@ class RouterNode():
             row_str = f"nbr {nbr} | {row_data}"
             self.myGUI.println(row_str)
 
-        
+        # Rubriker för distansvektor och rutter
         dv_header_line = "\ndst  |  " + "  ".join(f"{i}" for i in range(self.sim.NUM_NODES))
-        
         dv_separator_line = "-" * len(dv_header_line)
         
-        costs_row_str   = "cost  |  " + "  ".join(str(self.distanceVector[i]) for i in range(self.sim.NUM_NODES))
-        
-        routes_row_str  = "route |  " + "  ".join(str(self.nextHops[i]) if (self.nextHops[i] is not None) else "-" 
-                                                  for i in range(self.sim.NUM_NODES))
+        costs_row_str = "cost  |  " + "  ".join(str(self.distanceVector[i]) for i in range(self.sim.NUM_NODES))
+        routes_row_str = "route |  " + "  ".join(str(self.nextHops[i]) if (self.nextHops[i] is not None) else "-" 
+                                                for i in range(self.sim.NUM_NODES))
 
-        
-        # Utskrift av distance vector och routes (som originalet)
+        # Skriver ut distansvektorn och rutt-tabellen
         self.myGUI.println("\nOur distance vector and routes:")
-        
-      
         self.myGUI.println(dv_header_line)
+        # Lägg till separator-linje så det matchar tabellen ovan
+        self.myGUI.println(dv_separator_line)
+        self.myGUI.println(costs_row_str)
+        self.myGUI.println(routes_row_str)
