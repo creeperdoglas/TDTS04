@@ -1,114 +1,136 @@
 #!/usr/bin/env python
+# code by melgu374 and antfo614
 import GuiTextArea, RouterPacket, F
 from copy import deepcopy
+from F import F
 
 class RouterNode():
-    myID = None
-    myGUI = None
-    sim = None
-    
-    linkcosts = None    
-    ncosts = None       
-    neighbours = None   
-    mincost = None      
-    path = None         
-
-    
-
-    # --------------------------------------------------
     def __init__(self, ID, sim, costs):
         self.myID = ID
         self.sim = sim
-        self.myGUI = GuiTextArea.GuiTextArea("  Output window for Router #" + str(ID) + "  ")
+        self.myGUI = GuiTextArea.GuiTextArea(f"Output window for Router #{ID}")
 
-        self.neighbours = [i for i in range(len(costs)) if costs[i] != sim.INFINITY and costs[i] != 0]
-        self.linkcosts = {}
-        self.ncosts = {}
-        for n in self.neighbours:
-            self.ncosts[n] = [self.sim.INFINITY] * self.sim.NUM_NODES
-            self.linkcosts[n] = costs[n]
+        self.costs = deepcopy(costs)
+        self.neighbors = [i for i in range(len(costs)) if costs[i] != sim.INFINITY and costs[i] != 0]
+        self.distanceTable = [[sim.INFINITY]*sim.NUM_NODES for _ in range(sim.NUM_NODES)]
+        self.distanceVector = deepcopy(costs)
+        self.nextHops = [None if costs[i] == sim.INFINITY else i for i in range(sim.NUM_NODES)]
 
-        self.mincost = [i for i in costs]
-        self.path = [-1] * self.sim.NUM_NODES
-
+        self.initRouteTable()
         self.propagate()
 
+    def initRouteTable(self):
+        for i in range(self.sim.NUM_NODES):
+            self.distanceTable[self.myID][i] = self.costs[i]
+            if self.costs[i] != self.sim.INFINITY and i != self.myID:
+                self.nextHops[i] = i
+            else:
+                self.nextHops[i] = None
 
-    # --------------------------------------------------
     def recvUpdate(self, pkt):
-      
-        self.ncosts[pkt.sourceid] = pkt.mincost
-        changed = self.calcMincost()
+        source = pkt.sourceid
+        updated = False
 
-     
-        if changed:
+    
+        for dest in range(self.sim.NUM_NODES):
+            self.distanceTable[source][dest] = pkt.mincost[dest]
+
+        
+        updated = self.calcMincost()
+
+        if updated:
             self.propagate()
 
     def calcMincost(self):
-        changed = False
+        updated = False
 
-        for i in range(self.sim.NUM_NODES):
-            
-            if i == self.myID:
-                self.mincost[i] = 0
-            else:
-                if i in self.neighbours:
-                    
-                    new_cost = self.linkcosts[i]
-                    path = i
-                else:
-                   
-                    new_cost = self.sim.INFINITY
-                    path = -1
-                for n in self.neighbours:
-                    cost = self.linkcosts[n] + self.ncosts[n][i]
-                    if cost < new_cost:
-                        new_cost = cost
-                        path = n
+        for dst in range(self.sim.NUM_NODES):
+            if dst == self.myID:
+                continue
 
-                if self.mincost[i] != new_cost or self.path[i] == -1:
-                    self.mincost[i] = new_cost
-                    self.path[i] = path
-                    changed = True
+            min_cost = self.costs[dst]
+            next_hop = None if min_cost == self.sim.INFINITY else dst
 
-        return changed
+            for neighbor in self.neighbors:
+                potential_cost = self.costs[neighbor] + self.distanceTable[neighbor][dst]
+                if potential_cost < min_cost:
+                    min_cost = potential_cost
+                    next_hop = neighbor
 
-    # --------------------------------------------------
+            if min_cost != self.distanceVector[dst] or next_hop != self.nextHops[dst]:
+                updated = True
+                self.distanceVector[dst] = min_cost
+                self.nextHops[dst] = next_hop
+
+        return updated
+
     def propagate(self):
-        
+        for neighbor in self.neighbors:
+            sendVector = deepcopy(self.distanceVector)
 
-        for n in self.neighbours:
-            costs = deepcopy(self.mincost)
-          
             if self.sim.POISONREVERSE:
-                for i, next in enumerate(self.path):
-                    if n == next:
-                        costs[i] = self.sim.INFINITY
-            pkt = RouterPacket.RouterPacket(self.myID, n, costs)
-            self.sendUpdate(pkt)
+                for i in range(self.sim.NUM_NODES):
+                    if self.nextHops[i] == neighbor:
+                        sendVector[i] = self.sim.INFINITY
 
+            packet = RouterPacket.RouterPacket(self.myID, neighbor, sendVector)
+            self.sendUpdate(packet)
 
-    # --------------------------------------------------
     def sendUpdate(self, pkt):
         self.sim.toLayer2(pkt)
 
-
-    # --------------------------------------------------
-    def printDistanceTable(self):
-        self.myGUI.println("Current table for " + str(self.myID) +
-                           "  at time " + str(self.sim.getClocktime()))
-        self.myGUI.println("Router\t\tCost\t\tVia")
-        for i, cost in enumerate(self.mincost):
-            self.myGUI.println(str(i) + "\t\t" + str(cost) + "\t\t" + str(self.path[i]))
-        self.myGUI.println("Neighbour\t\tLink Cost\t\tTable")
-        for n in self.neighbours:
-            self.myGUI.println(str(n) + "\t\t" + str(self.linkcosts[n]) + "\t\t" + str(self.ncosts[n]))
-        self.myGUI.println()
-
-
-    # --------------------------------------------------
     def updateLinkCost(self, dest, newcost):
-        self.linkcosts[dest] = newcost
-        changed = self.calcMincost()
-        if changed:
+        
+        oldcost = self.costs[dest]
+        self.costs[dest] = newcost
+        self.distanceTable[self.myID][dest] = newcost
+
+        updated = False
+
+        # Beräkna om mincost efter förändring av länkkostnad
+        updated = self.calcMincost()
+
+        if updated:
             self.propagate()
+
+    def printDistanceTable(self):
+      
+        time_now = str(self.sim.getClocktime())
+        
+        self.myGUI.println(f"Current state for router {self.myID} at time {time_now}")
+        
+
+        header = f"    dst |" + "  ".join(f"{i}" for i in range(self.sim.NUM_NODES))
+        
+        separator_line = "-" * len(header)
+        
+ 
+        self.myGUI.println("\nDistancetable:")
+        self.myGUI.println(header)
+        self.myGUI.println(separator_line)
+
+        nodes_to_print = [self.myID] + self.neighbors
+        for nbr in nodes_to_print:
+            row_data = "  ".join(F.format(self.distanceTable[nbr][dst], 3) for dst in range(self.sim.NUM_NODES))
+            row_str = f"nbr {nbr} | {row_data}"
+            self.myGUI.println(row_str)
+
+        
+       
+        dv_header_line = "\ndst  |  " + "  ".join(f"{i}" for i in range(self.sim.NUM_NODES))
+        
+        dv_separator_line = "-" * len(dv_header_line)
+        
+        costs_row_str   = "cost  |  " + "  ".join(str(self.distanceVector[i]) for i in range(self.sim.NUM_NODES))
+        
+        routes_row_str  = "route |  " + "  ".join(str(self.nextHops[i]) if (self.nextHops[i] is not None) else "-" 
+                                                  for i in range(self.sim.NUM_NODES))
+
+        
+        
+        self.myGUI.println("\nOur distance vector and routes:")
+        
+      
+        self.myGUI.println(dv_header_line)
+        self.myGUI.println(dv_separator_line)
+        self.myGUI.println(costs_row_str)
